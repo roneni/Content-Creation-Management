@@ -2,7 +2,7 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Globe, Loader2, Trash2, ExternalLink, Zap, FileText, AlertTriangle, Clock, ArrowRight } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Trash2, ExternalLink, Zap, FileText, AlertTriangle, ArrowRight, Target } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { SiteStatus } from "@/types";
@@ -20,7 +20,11 @@ function scoreColor(score: number): string {
   if (score >= 5) return "text-yellow-400";
   return "text-red-400";
 }
-
+function healthColor(score: number): string {
+  if (score >= 70) return "text-green-400";
+  if (score >= 50) return "text-yellow-400";
+  return "text-red-400";
+}
 function priorityStyle(priority: string) {
   switch (priority) {
     case "critical": return { bg: "bg-red-500/10", text: "text-red-400" };
@@ -50,6 +54,9 @@ export default function SiteDetailPage() {
   const { data: recsData } = trpc.analysis.getRecommendations.useQuery(
     { siteId }, { enabled: !!site && site.status === "ready" }
   );
+  const { data: strategy } = trpc.strategy.getLatest.useQuery(
+    { siteId }, { enabled: !!site && site.status === "ready" }
+  );
 
   const startAnalysis = trpc.crawl.startAnalysis.useMutation({
     onSuccess: () => {
@@ -59,7 +66,6 @@ export default function SiteDetailPage() {
     },
     onError: () => { utils.sites.get.invalidate({ id: siteId }); },
   });
-
   const deleteSite = trpc.sites.delete.useMutation({
     onSuccess: () => router.push("/dashboard"),
   });
@@ -79,6 +85,7 @@ export default function SiteDetailPage() {
         <ArrowLeft className="w-4 h-4" />Dashboard
       </Link>
 
+      {/* Site header */}
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
@@ -90,9 +97,17 @@ export default function SiteDetailPage() {
               </a>
             </div>
           </div>
-          <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
-            {isProcessing && <Loader2 className="w-3 h-3 animate-spin mr-1.5" />}{status.label}
-          </span>
+          <div className="flex items-center gap-3">
+            {site.healthScore !== null && site.healthScore !== undefined && (
+              <div className="text-center">
+                <div className={"text-2xl font-bold " + healthColor(site.healthScore)}>{site.healthScore}</div>
+                <div className="text-xs text-gray-500">Health</div>
+              </div>
+            )}
+            <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
+              {isProcessing && <Loader2 className="w-3 h-3 animate-spin mr-1.5" />}{status.label}
+            </span>
+          </div>
         </div>
         <div className="mt-4 pt-4 border-t border-gray-800 flex flex-wrap items-center gap-3">
           <button onClick={() => startAnalysis.mutate({ siteId })} disabled={isProcessing || startAnalysis.isPending}
@@ -101,17 +116,25 @@ export default function SiteDetailPage() {
               <><Loader2 className="w-4 h-4 animate-spin" />{site.status === "crawling" ? "Crawling..." : site.status === "analyzing" ? "Analyzing..." : "Starting..."}</>
             ) : (<><Zap className="w-4 h-4" />{site.status === "ready" ? "Re-analyze" : "Start Analysis"}</>)}
           </button>
+          {site.status === "ready" && (
+            <Link href={"/dashboard/sites/" + siteId + "/strategy"}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded-lg transition-colors">
+              <Target className="w-4 h-4" />
+              {strategy ? "View Strategy" : "Generate Strategy"}
+            </Link>
+          )}
           {site.pageCount > 0 && <span className="text-sm text-gray-500">{site.pageCount} pages</span>}
           {site.lastAnalysisAt && <span className="text-sm text-gray-500">Analyzed {new Date(site.lastAnalysisAt).toLocaleDateString()}</span>}
         </div>
         {startAnalysis.isError && <p className="text-red-400 text-sm mt-3">{startAnalysis.error.message}</p>}
       </div>
 
+      {/* Processing state */}
       {isProcessing && (
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 mb-6 text-center">
           <Loader2 className="w-10 h-10 text-blue-400 animate-spin mx-auto mb-4" />
           <h2 className="text-lg font-medium text-white mb-2">{site.status === "crawling" ? "Crawling your site..." : "AI is analyzing your pages..."}</h2>
-          <p className="text-sm text-gray-400">{site.status === "crawling" ? "Discovering and fetching all pages. This can take a minute." : "Claude is reviewing each page. This takes a few minutes."}</p>
+          <p className="text-sm text-gray-400">{site.status === "crawling" ? "Discovering and fetching all pages." : "Claude is reviewing each page. This takes a few minutes."}</p>
         </div>
       )}
 
@@ -125,13 +148,27 @@ export default function SiteDetailPage() {
 
       {site.status === "error" && (
         <div className="bg-red-900/10 border border-red-800/30 rounded-2xl p-6 mb-6">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
-            <div><h3 className="text-white font-medium">Analysis failed</h3><p className="text-sm text-gray-400 mt-1">Something went wrong. Try again.</p></div>
-          </div>
+          <div className="flex items-center gap-3"><AlertTriangle className="w-5 h-5 text-red-400 shrink-0" /><div><h3 className="text-white font-medium">Analysis failed</h3><p className="text-sm text-gray-400 mt-1">Something went wrong. Try again.</p></div></div>
         </div>
       )}
 
+      {/* Strategy summary card */}
+      {site.status === "ready" && strategy && (
+        <Link href={"/dashboard/sites/" + siteId + "/strategy"} className="block bg-purple-900/10 border border-purple-800/30 rounded-2xl p-5 mb-6 hover:border-purple-700/40 transition-colors group">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Target className="w-5 h-5 text-purple-400" />
+              <div>
+                <h3 className="text-white font-medium">Site Strategy</h3>
+                <p className="text-sm text-gray-400 mt-0.5">{(strategy.topPriorities as string[])?.[0] ?? "View your strategy and content calendar"}</p>
+              </div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-600 group-hover:text-purple-400 transition-colors" />
+          </div>
+        </Link>
+      )}
+
+      {/* Results */}
       {site.status === "ready" && analyses.length > 0 && (
         <>
           {criticalRecs.length > 0 && (
@@ -158,7 +195,7 @@ export default function SiteDetailPage() {
                 })}
               </div>
               {recs.length > 5 && (
-                <Link href={`/dashboard/sites/${siteId}/recommendations`} className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 mt-3">
+                <Link href={"/dashboard/sites/" + siteId + "/recommendations"} className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 mt-3">
                   View all {recs.length} recommendations<ArrowRight className="w-3 h-3" />
                 </Link>
               )}
@@ -169,7 +206,7 @@ export default function SiteDetailPage() {
             <h2 className="text-lg font-semibold text-white mb-3">Page Analysis ({analyses.length} pages)</h2>
             <div className="space-y-2">
               {analyses.map((analysis) => (
-                <Link key={analysis.id} href={`/dashboard/sites/${siteId}/pages/${analysis.id}`}
+                <Link key={analysis.id} href={"/dashboard/sites/" + siteId + "/pages/" + analysis.id}
                   className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors group">
                   <div className="flex items-center gap-3 min-w-0">
                     <FileText className="w-4 h-4 text-gray-500 shrink-0" />
@@ -180,7 +217,7 @@ export default function SiteDetailPage() {
                   </div>
                   <div className="flex items-center gap-4 shrink-0 ml-4">
                     {analysis.intentClassification && <span className="text-xs text-gray-500 hidden sm:block">{analysis.intentClassification}</span>}
-                    <span className={`text-sm font-semibold ${scoreColor(analysis.contentQualityScore ?? 0)}`}>{analysis.contentQualityScore}/10</span>
+                    <span className={"text-sm font-semibold " + scoreColor(analysis.contentQualityScore ?? 0)}>{analysis.contentQualityScore}/10</span>
                     <ArrowRight className="w-4 h-4 text-gray-600 group-hover:text-gray-400 transition-colors" />
                   </div>
                 </Link>
@@ -190,6 +227,7 @@ export default function SiteDetailPage() {
         </>
       )}
 
+      {/* Delete */}
       <div className="mt-8 pt-6 border-t border-gray-800">
         {!showDeleteConfirm ? (
           <button onClick={() => setShowDeleteConfirm(true)} className="flex items-center gap-2 text-sm text-gray-500 hover:text-red-400 transition-colors">
